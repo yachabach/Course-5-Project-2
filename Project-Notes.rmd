@@ -1,0 +1,168 @@
+---
+title: "Health and Economic Impact of Extreme Weather Events"
+author: "Dave Yachabach"
+date: "10/14/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(data.table)     # fread loads MUCH faster than read.csv
+require(R.utils)        # Required by fread()
+require(ggplot2)
+```
+
+# Synopsis
+This document describes the health and economic impact of extreme weather events.  The Health impact is measured in terms of casualties.  Casualties are defined as death or injury as a result of a weather event.  
+
+Economic impact is expressed in Billions of dollars and is the combination of Property Damage and Crop Damage.  
+
+## Data Processing  
+The data for this document was originally obtained from the National Oceanic and Atmospheric Administration (NOAA) and was made available to this project through Coursera at [https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2).  
+
+```{r Required_Packages}
+
+# Load Data
+bz2FilNm <- "repdata_data_StormData.csv.bz2"
+dt <- fread(bz2FilNm)
+
+# Get entries that caused casualties or economic impact
+dtImpactData <- dt[FATALITIES > 0 | INJURIES > 0 | PROPDMG > 0 | CROPDMG>0,.(FATALITIES, INJURIES,PROPDMG, PROPDMGEXP, CROPDMG, CROPDMGEXP), by = "EVTYPE"]
+
+# correct the value of the damages to Billions
+# Correct the "K"
+dtImpactData[PROPDMGEXP == "K",]$PROPDMG <- dtImpactData[PROPDMGEXP == "K",]$PROPDMG/1000000
+dtImpactData[CROPDMGEXP == "K",]$CROPDMG <- dtImpactData[CROPDMGEXP == "K",]$CROPDMG/1000000
+
+# Correct the "M"
+dtImpactData[PROPDMGEXP == "M",]$PROPDMG <- dtImpactData[PROPDMGEXP == "M",]$PROPDMG/1000
+dtImpactData[CROPDMGEXP == "M",]$CROPDMG <- dtImpactData[CROPDMGEXP == "M",]$CROPDMG/1000
+
+# Sum to limit the rows
+# 
+dtImpactTotals <- dtImpactData[,.(CASUALTIES = sum(FATALITIES,INJURIES), ECONOMIC = sum(PROPDMG, CROPDMG)), by = "EVTYPE"]
+
+```
+### Manipulations  
+Weather event data is filtered to only those events with economic or public health impact.  
+
+- Public health impact = Casualties (Fatality + Injury)  
+
+- Economic impact = Economic (Property + Crop damage)  
+
+This results in `r length(dtImpactTotals[,EVTYPE])` categories of weather events.  
+
+### Cleaning and Consolidating  
+Economic data were expressed in two fields:  
+
+- PROPDMG and  CROPDMG: Numeric - Indicates Amount  
+
+- PROPDMGEXP and CROPDMGEXP: Character - "K", "M", or "B"  
+
+Each entry was checked and corrected to "Billions".  
+
+Data includes multiple names for similar storm types.  These names were consolidated into 11 event categories. The table in Appendix 1 shows how public health threats were consolidated.
+
+Additionally, Fatalities and Injuries were consolidated into Casualties; Property and Crop damage were consolidated into Economic.  
+
+```{r EventConsolidation}
+# Build lists of event descriptions
+# 
+
+lstTSTMWEvent <- grep("THUND|TST", dtImpactTotals [,EVTYPE], value = TRUE)
+lstTRNDOEvent <- grep("TORN|SPOUT|FUNN", dtImpactTotals $EVTYPE, value = TRUE)
+lstWINDEvent <- grep("^HIGH WIND$|^HIGH WINDS*$", dtImpactTotals $EVTYPE, value = TRUE)
+lstLTNGEvent <- grep("^[L].*G.*G", dtImpactTotals [,EVTYPE], value = TRUE)
+lstHEATEvent <- grep("HEAT|WARM", dtImpactTotals [,EVTYPE], value = TRUE)
+lstHRCNEvent <- grep("HUR|Hur|Typ|TYP|TROP|Trop", dtImpactTotals $EVTYPE, value = TRUE)
+lstFLOODEvent <- grep("FLOO|Floo|FLA|Fla", dtImpactTotals $EVTYPE, value = TRUE)
+lstCOLDEvent <- grep("COLD.*|Cold", dtImpactTotals $EVTYPE, value = TRUE)
+lstWINTEREvent <- grep("WINT|Wint", dtImpactTotals $EVTYPE, value = TRUE)
+lstSNOWEvent <- grep("SNOW", dtImpactTotals $EVTYPE, value = TRUE)
+lstHAILEvent <- grep("HAIL", dtImpactTotals $EVTYPE, value = TRUE)
+lstFIREEvent <- grep("FIRE", dtImpactTotals $EVTYPE, value = TRUE)
+lstTIDEEvent <- grep("CURR|TIDE", dtImpactTotals $EVTYPE, value = TRUE)
+lstFOGEvent <- grep("FOG", dtImpactTotals $EVTYPE, value = TRUE)
+lstBLZEvent <- grep("BLI", dtImpactTotals $EVTYPE, value = TRUE)
+lstICEEvent <- grep("ICE", dtImpactTotals $EVTYPE, value = TRUE)
+lstSEAEvent <- grep("SEAS$|TIDE|CURR", dtImpactTotals $EVTYPE, value = TRUE)
+
+# Then apply those descriptions to EVTYPE to summarize into EVENT categories
+
+dtImpactTotals [,EVENT := "OTHER"]
+dtImpactTotals [EVTYPE %in% lstTRNDOEvent, ]$EVENT = "TORNADO"
+dtImpactTotals [EVTYPE %in% lstTSTMWEvent, ]$EVENT = "TSTMS/HAIL/LIGHTNING"
+dtImpactTotals [EVTYPE %in% lstHAILEvent, ]$EVENT = "TSTMS/HAIL/LIGHTNING"
+dtImpactTotals [EVTYPE %in% lstWINDEvent,]$EVENT = "WINDS"
+dtImpactTotals [EVTYPE %in% lstLTNGEvent, ]$EVENT = "TSTMS/HAIL/LIGHTNING"
+dtImpactTotals [EVTYPE %in% lstHEATEvent, ]$EVENT = "HEAT"
+dtImpactTotals [EVTYPE %in% lstHRCNEvent, ]$EVENT = "HURRICANE"
+dtImpactTotals [EVTYPE %in% lstFLOODEvent, ]$EVENT = "FLOOD"
+dtImpactTotals [EVTYPE %in% lstCOLDEvent, ]$EVENT = "WINTER/COLD/SNOW"
+dtImpactTotals [EVTYPE %in% lstWINTEREvent, ]$EVENT = "WINTER/COLD/SNOW"
+dtImpactTotals [EVTYPE %in% lstSNOWEvent, ]$EVENT = "WINTER/COLD/SNOW"
+dtImpactTotals [EVTYPE %in% lstBLZEvent,]$EVENT = "WINTER/COLD/SNOW"
+dtImpactTotals [EVTYPE %in% lstICEEvent,]$EVENT = "WINTER/COLD/SNOW"
+dtImpactTotals [EVTYPE %in% lstFIREEvent,]$EVENT = "WILDFIRE"
+dtImpactTotals [EVTYPE %in% lstTIDEEvent,]$EVENT = "SEAS/TIDES"
+dtImpactTotals [EVTYPE %in% lstFOGEvent,]$EVENT = "FOG"
+
+```
+# Results  
+## Public Health Impact
+The graph below shows the relative public health hazard of the top 5 consolidated weather event categories since 1950:  
+
+```{r HealthTop5Graph}
+
+# We need top 5 casualty events
+dtHealthTop5 <- dtImpactTotals[,.(CASUALTIES = sum(CASUALTIES)), by = "EVENT"]
+setorder(dtHealthTop5, -CASUALTIES)
+dtHealthTop5 <- dtHealthTop5[1:5,]
+dtHealthTop5
+
+# Now plot
+g <- ggplot(data = dtHealthTop5)
+ga <- g + aes(x = dtHealthTop5$EVENT, y = dtHealthTop5$CASUALTIES)
+gag <- ga + geom_bar(stat = "identity", fill = "blue")
+gagl <- gag + ggtitle ("Top 5 Most Dangerous Weather Events") + xlab("Event") + ylab("Casualties") + theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+gagl + scale_x_discrete(limits = dtHealthTop5$EVENT)
+
+```
+
+## Economic Impact  
+The graph below shows the relative economic hazard of the top 5 consolidated weather event categories since 1950:
+
+```{r EconTop5Graph}
+# Get top 5 Economic events
+dtEconTop5 <- dtImpactTotals[,.(ECONOMIC_Blns = sum(ECONOMIC)), by = "EVENT"]
+setorder(dtEconTop5, -ECONOMIC_Blns)
+dtEconTop5 <- dtEconTop5[1:5,]
+dtEconTop5
+
+# Now plot
+g <- ggplot(data = dtEconTop5)
+ga <- g + aes(x = dtEconTop5$EVENT, y = dtEconTop5$ECONOMIC_Blns)
+gag <- ga + geom_bar(stat = "identity", fill = "green")
+gagl <- gag + ggtitle ("Top 5 Most Costly Weather Events") + xlab("Event") + ylab("Economic (Billions $)") + theme(legend.position = "none", axis.text.x = element_text(angle = 90))
+gagl + scale_x_discrete(limits = dtEconTop5$EVENT)
+
+```
+
+
+# Appendix 1  
+EVENT|EVTYPE|  
+-|-|  
+TORNADO|`r dtImpactTotals [EVENT == "TORNADO",EVTYPE]`|  
+TSTMS/HAIL/LIGHTNING|`r dtImpactTotals [EVENT == "TSTMS/HAIL/LIGHTNING",EVTYPE]`|  
+HEAT|`r dtImpactTotals [EVENT == "HEAT",EVTYPE]`|  
+FLOOD|`r dtImpactTotals [EVENT == "FLOOD",EVTYPE]`|  
+WINTER/COLD/SNOW|`r dtImpactTotals [EVENT == "WINTER/COLD/SNOW",EVTYPE]`|  
+HURRICANE|`r dtImpactTotals [EVENT == "HURRICANE",EVTYPE]`|  
+WINDS|`r dtImpactTotals [EVENT == "WINDS",EVTYPE]`| 
+WILDFIRE|`r dtImpactTotals [EVENT == "WILDFIRE",EVTYPE]`| 
+SEAS/TIDES|`r dtImpactTotals [EVENT == "SEAS/TIDES",EVTYPE]`| 
+FOG|`r dtImpactTotals [EVENT == "FOG",EVTYPE]`| 
+OTHER|`r dtImpactTotals [EVENT == "OTHER",EVTYPE]`| 
+
+
